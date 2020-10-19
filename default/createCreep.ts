@@ -1,9 +1,12 @@
-import { unique } from 'lodash';
+import { clearCreeps} from './util';
+
+
 const CREEP_STATUS_RELAXING = 'relaxing';
 const CREEP_STATUS_BACK = 'harvestBacking';
 const CREEP_STATUS_HARVEST = 'harvesting';
 const CREEP_STATUS_UPGRADING = 'upgrading';
 const CREEP_STATUS_BUILDING = 'building';
+const CREEP_STATUS_REPAIR = 'repairing';
 
 
 export function createCreep() {
@@ -23,12 +26,14 @@ export function createCreep() {
     }
     return null;
 }
-
+type NAME = 'transfers' | 'upgraders' | 'roadBuilders' | 'extensionBuilders' | 'repairs' | 'harvesters';
 const workScheduling: {
-    name: 'transfers' | 'upgraders' | 'roadBuilders' | 'extensionBuilders',
+    name: NAME
     need: number
 }[] = [
+    {name: 'repairs', need: 2},
     {name: 'transfers', need: 1},
+    {name: 'harvesters', need: 3},
     {name: 'upgraders', need: 1},
     {name: 'roadBuilders', need: 5},
     {name: 'extensionBuilders', need: 3}
@@ -36,6 +41,14 @@ const workScheduling: {
 
 export function loop() {
     const Spawn1 = Game.spawns['Spawn1'];
+
+    clearCreeps();
+
+    // 先控制在10个以下
+    if (Object.keys(Game.creeps).length <= 10) {
+        createCreep();
+    }
+
     if (!Spawn1.memory.workList) {
         Spawn1.memory.workList = {};
     }
@@ -44,7 +57,15 @@ export function loop() {
         const creep = Game.creeps[creepName];
         // 如果这个 creep 是新生儿则对其安排工作
         if (!creep.memory.goal) {
-            creep.memory.goal = checkWorkToDo().name;
+            const name = checkWorkToDo().name;
+            if (name) {
+                creep.memory.goal = name;
+                if (!workList[name]) {
+                    workList[name] = [];
+                }
+                workList[name]?.push(creep.name)
+            }
+
         }
         if (creep.spawning) {
             continue;
@@ -55,15 +76,72 @@ export function loop() {
 
 function creepRun(creep: Creep) {
     switch(creep.memory.goal) {
+        case 'repairs': CreepController.repair(creep);break;
+        case 'harvesters': CreepController.harvester(creep);break;
         case 'transfers': CreepController.transfer(creep);break;
         case 'upgraders': CreepController.upgrader(creep);break;
-        case 'roadBuilders': CreepController.builder(creep, [STRUCTURE_EXTENSION, STRUCTURE_ROAD]);break;
-        case 'extensionBuilders': CreepController.builder(creep, [STRUCTURE_EXTENSION, STRUCTURE_ROAD]);
+        case 'roadBuilders': CreepController.builder(creep, [STRUCTURE_CONTAINER, STRUCTURE_ROAD, STRUCTURE_ROAD]);break;
+        case 'extensionBuilders': CreepController.builder(creep, [STRUCTURE_CONTAINER, STRUCTURE_EXTENSION, STRUCTURE_ROAD]);
+        default: {
+            CreepController.builder(creep, [STRUCTURE_CONTAINER, STRUCTURE_ROAD, STRUCTURE_ROAD]);
+        }
+        // default: {
+        //     creep.moveTo(17, 33);
+        // }
     }
 }
 
 export class CreepController {
+    static harvester(creep: Creep) {
+        if (
+            creep.memory.status === CREEP_STATUS_HARVEST
+            &&  creep.store.energy < creep.store.getCapacity(RESOURCE_ENERGY)
+            || creep.store.energy === 0
+        ) {
+            harvest(creep, 'source');
+            return;
+        }
+
+
+        let target;
+        const Spawn1 = Game.spawns['Spawn1'];
+        const containers = Spawn1.room.find<StructureContainer>(FIND_STRUCTURES, {
+            filter: con => {
+                return con.structureType === STRUCTURE_CONTAINER;
+            }
+        })
+        for (let con of containers) {
+            if (con.store.energy < con.store.getCapacity(RESOURCE_ENERGY)) {
+                target = con;
+                break;
+            }
+        }
+        if (!target) {
+            target = Spawn1;
+        }
+        const transferResult = creep.transfer(target, RESOURCE_ENERGY)
+        if (transferResult === ERR_NOT_IN_RANGE) {
+            creep.moveTo(target);
+            creep.memory.status = CREEP_STATUS_BACK;
+        } else if (transferResult === OK && creep.store.energy === 0) {
+            creep.memory.status = CREEP_STATUS_RELAXING;
+        } else {
+            creep.say(transferResult.toString());
+            this.builder(creep, [STRUCTURE_CONTAINER, STRUCTURE_ROAD, STRUCTURE_ROAD]);
+        }
+    
+        return;
+    }
     static transfer(creep: Creep) {
+        if (
+            creep.memory.status === CREEP_STATUS_HARVEST
+            &&  creep.store.energy < creep.store.getCapacity(RESOURCE_ENERGY)
+            || creep.store.energy === 0
+        ) {
+            harvest(creep);
+            return;
+        }
+
         let target;
         const Spawn1 = Game.spawns['Spawn1'];
         const extensions = Spawn1.room.find<StructureExtension>(FIND_MY_STRUCTURES, {
@@ -78,9 +156,15 @@ export class CreepController {
         if (!target) {
             target = Spawn1;
         }
+
+        if (target.store.energy === target.store.getCapacity(RESOURCE_ENERGY)) {
+            this.upgrader(creep);
+            return;
+        }
         const transferResult = creep.transfer(target, RESOURCE_ENERGY)
         if (transferResult === ERR_NOT_IN_RANGE) {
             creep.moveTo(target);
+            creep.memory.status = CREEP_STATUS_BACK;
         } else if (transferResult === OK && creep.store.energy === 0) {
             creep.memory.status = CREEP_STATUS_RELAXING;
         } else {
@@ -92,6 +176,15 @@ export class CreepController {
     }
 
     static upgrader(creep: Creep) {
+        if (
+            creep.memory.status === CREEP_STATUS_HARVEST
+            &&  creep.store.energy < creep.store.getCapacity(RESOURCE_ENERGY)
+            || creep.store.energy === 0
+        ) {
+            harvest(creep);
+            return;
+        }
+
         const Spawn1 = Game.spawns['Spawn1'];
         if (!Spawn1.room.controller) {
             return;
@@ -108,9 +201,40 @@ export class CreepController {
         }
     }
 
+    static repair(creep: Creep) {
+        if (
+            creep.memory.status === CREEP_STATUS_HARVEST
+            &&  creep.store.energy < creep.store.getCapacity(RESOURCE_ENERGY)
+            || creep.store.energy === 0
+        ) {
+            harvest(creep);
+            return;
+        }
+        const Spawn1 = Game.spawns['Spawn1'];
+        const target = creep.room.find<StructureContainer>(FIND_STRUCTURES, {
+            filter: stru => {
+                return (stru.structureType === STRUCTURE_CONTAINER || stru.structureType === STRUCTURE_ROAD) && stru.hits < stru.hitsMax;
+            }
+        });
+        // 如果需要维修，否则就去 build
+        if (target[0].hits === target[0].hitsMax) {
+            this.builder(creep, [STRUCTURE_CONTAINER, STRUCTURE_ROAD, STRUCTURE_ROAD]);
+            return;
+        }
+        const result = creep.repair(target[0])
+        if (result === ERR_NOT_IN_RANGE) {
+            creep.moveTo(target[0]);
+        } else if (result === OK) {
+            if (creep.store.energy === 0) {
+                creep.memory.status = CREEP_STATUS_RELAXING;
+            } else if (creep.store.energy > 0) {
+                creep.memory.status = CREEP_STATUS_UPGRADING;
+            }
+        }
+    }
+
     static builder(creep: Creep, buildQue: BuildableStructureConstant[]) {
         const nowBuildableSiteList = creep.room.find(FIND_CONSTRUCTION_SITES);
-    
         if (
             creep.memory.status === CREEP_STATUS_HARVEST
             &&  creep.store.energy < creep.store.getCapacity(RESOURCE_ENERGY)
@@ -122,7 +246,7 @@ export class CreepController {
     
         if (nowBuildableSiteList && nowBuildableSiteList.length) {
             let target;
-            for (let type in buildQue) {
+            for (let type of buildQue) {
                 let tt = creep.pos.findClosestByRange(FIND_CONSTRUCTION_SITES, {
                     filter: site => site.structureType === type
                 });
@@ -136,6 +260,7 @@ export class CreepController {
                 if (buildResult === OK && creep.store.energy > 0) {
                     creep.memory.status = CREEP_STATUS_BUILDING;
                 } else if (buildResult === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(target);
                     creep.memory.status = CREEP_STATUS_BACK;
                 } else {
                     creep.say(buildResult.toString());
@@ -156,6 +281,7 @@ function checkWorkToDo() {
     }
     const workList = Spawn1.memory.workList;
     return workScheduling.find(work => {
+        console.log(workList[work.name], 'work.name', work.name)
         if (!workList[work.name]) {
             workList[work.name] = [];
         }
@@ -193,11 +319,21 @@ function updateCurrentListFroArr(memoryList: string[], currentArr: any[]) {
     return memoryList;
 }
 
-function harvest(creep: Creep) {
-    const source = Game.getObjectById('5bbcae0a9099fc012e638598') as Source;
-    if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+function harvest(creep: Creep, from: 'source' | 'container' = 'container') {
+    let source;
+    let result;
+    if (from === 'source') {
+        source = Game.getObjectById('5bbcae0a9099fc012e638598') as Source;
+        result = creep.harvest(source);
+    } else {
+        source = Game.getObjectById('5f8ac64a16bbf0ddd01d9b4a') as StructureContainer;
+        result = creep.withdraw(source, RESOURCE_ENERGY);
+    }
+    creep.memory.status = CREEP_STATUS_HARVEST;
+    if (result === ERR_NOT_IN_RANGE) {
         creep.moveTo(source);
-        creep.memory.status = CREEP_STATUS_HARVEST;
+    } else if (result !== OK) {
+        creep.say(result.toString())
     }
 }
 

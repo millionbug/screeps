@@ -1,3 +1,3 @@
 import { startWork } from './loop1';
-
-module.exports.loop = startWork;
+import { loop as loop2 } from './createCreep';
+module.exports.loop = loop2;

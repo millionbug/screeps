@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startWork = void 0;
+var util_1 = require("./util");
 var CREEP_STATUS_RELAXING = 'relaxing';
 var CREEP_STATUS_BACK = 'harvestBacking';
 var CREEP_STATUS_HARVEST = 'harvesting';
@@ -16,7 +17,7 @@ for (var name_1 in Memory.creeps) {
 function startWork() {
     Spawn1 = Game.spawns['Spawn1'];
     initSourceMap();
-    clearCreeps();
+    util_1.clearCreeps();
     var creepsAcount = Object.keys(Game.creeps).length;
     createNewCreep();
     for (var creepName in Game.creeps) {
@@ -118,22 +119,6 @@ function initSourceMap() {
             Spawn1.memory.sourceMap[index] = [];
         }
     });
-}
-function clearCreeps() {
-    for (var name_2 in Memory.creeps) {
-        var creepMemory = Memory.creeps[name_2];
-        // 如果这个 creep 死掉了，需要清空所有有关的数据
-        if (!Game.creeps[name_2]) {
-            // 删除当前在采矿的出勤表
-            var sourceMap = Memory.spawns['Spawn1'].sourceMap[creepMemory.sourceMap];
-            if (sourceMap) {
-                var index = sourceMap.indexOf(name_2);
-                sourceMap.splice(index, 1);
-            }
-            // 删除 creep 的 memory
-            delete Memory.creeps[name_2];
-        }
-    }
 }
 function startHarvester(creep) {
     // const source = sources[Number(creep.memory.sourceMap) || 0];
