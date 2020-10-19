@@ -210,7 +210,7 @@ var CreepController = /** @class */ (function () {
             }
         });
         // 如果需要维修，否则就去 build
-        if (target[0].hits === target[0].hitsMax) {
+        if (!target || !target.length) {
             this.builder(creep, [STRUCTURE_CONTAINER, STRUCTURE_ROAD, STRUCTURE_ROAD]);
             return;
         }
